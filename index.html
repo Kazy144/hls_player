@@ -1,0 +1,149 @@
+
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HLS Player</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 850px;
+      margin: 40px auto;
+      padding: 0 16px;
+      background: #f7f8fa;
+      color: #202124;
+    }
+    main {
+      background: white;
+      padding: 24px;
+      border-radius: 14px;
+      box-shadow: 0 2px 12px #0001;
+    }
+    input, button {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px;
+      margin: 6px 0;
+      font: inherit;
+      border-radius: 8px;
+    }
+    input { border: 1px solid #bbb; }
+    button {
+      border: 0;
+      background: #1769e0;
+      color: white;
+      cursor: pointer;
+    }
+    video {
+      width: 100%;
+      margin-top: 16px;
+      background: black;
+      border-radius: 8px;
+    }
+    #status {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #444;
+    }
+    .note { font-size: .92rem; color: #555; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>HLS Player</h1>
+  <p>再生が許可されたHLS動画のURLを入力してください。</p>
+
+  <label for="url">m3u8 URL</label>
+  <input id="url" type="url"
+    placeholder="https://example.com/playlist.m3u8">
+
+  <button id="play">動画を読み込む</button>
+
+  <video id="video" controls playsinline></video>
+
+  <p id="status" role="status">待機中</p>
+
+  <p class="note">
+    このページはHLSの再生用です。
+    MP4への変換・動画全体の保存を保証するものではありません。
+    配信元のアクセス許可と利用条件を守って使用してください。
+  </p>
+
+  <p id="directLink"></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+  const input = document.getElementById("url");
+  const video = document.getElementById("video");
+  const status = document.getElementById("status");
+  const directLink = document.getElementById("directLink");
+
+  let hls = null;
+
+  document.getElementById("play").addEventListener("click", () => {
+    const value = input.value.trim();
+
+    let parsed;
+    try {
+      parsed = new URL(value);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error("HTTPSまたはHTTPのURLを入力してください。");
+      }
+    } catch (e) {
+      status.textContent = "URLが正しくありません。";
+      return;
+    }
+
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    directLink.replaceChildren();
+    status.textContent = "動画を読み込んでいます…";
+
+    // m3u8へのリンクを表示するだけで、動画保存とは別です。
+    const link = document.createElement("a");
+    link.href = parsed.href;
+    link.textContent = "元のm3u8プレイリストを開く";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    directLink.appendChild(link);
+
+    if (window.Hls && Hls.isSupported()) {
+      hls = new Hls();
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        status.textContent = "読み込み完了。再生ボタンを押してください。";
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          status.textContent =
+            "読み込みに失敗しました。URL、配信元のCORS設定、" +
+            "ストリーム形式、アクセス権限を確認してください。";
+        }
+      });
+
+      hls.loadSource(parsed.href);
+      hls.attachMedia(video);
+
+    } else if (
+      video.canPlayType("application/vnd.apple.mpegurl")
+    ) {
+      video.src = parsed.href;
+      status.textContent =
+        "ブラウザ標準のHLS再生を試しています。";
+    } else {
+      status.textContent =
+        "このブラウザはHLS再生に対応していません。";
+    }
+  });
+</script>
+</body>
+</html>
