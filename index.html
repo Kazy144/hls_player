@@ -1,10 +1,16 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HLS Player</title>
+  <title>万能動画プレイヤー</title>
+
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       font-family: system-ui, sans-serif;
       max-width: 850px;
@@ -13,135 +19,402 @@
       background: #f7f8fa;
       color: #202124;
     }
+
     main {
       background: white;
       padding: 24px;
       border-radius: 14px;
       box-shadow: 0 2px 12px #0001;
     }
-    input, button {
-      box-sizing: border-box;
+
+    h1 {
+      font-size: 1.7rem;
+    }
+
+    label {
+      display: block;
+      margin-top: 14px;
+      font-weight: 600;
+    }
+
+    input, select, button {
       width: 100%;
       padding: 12px;
       margin: 6px 0;
       font: inherit;
       border-radius: 8px;
     }
-    input { border: 1px solid #bbb; }
+
+    input, select {
+      border: 1px solid #bbb;
+      background: white;
+    }
+
     button {
       border: 0;
       background: #1769e0;
       color: white;
       cursor: pointer;
     }
-    video {
+
+    button:hover {
+      background: #1056bd;
+    }
+
+    .player {
+      position: relative;
       width: 100%;
       margin-top: 16px;
-      background: black;
+      aspect-ratio: 16 / 9;
+      background: #000;
       border-radius: 8px;
+      overflow: hidden;
     }
+
+    video, iframe {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #000;
+    }
+
+    video {
+      object-fit: contain;
+    }
+
     #status {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       color: #444;
     }
-    .note { font-size: .92rem; color: #555; }
+
+    .note {
+      font-size: .92rem;
+      color: #555;
+      line-height: 1.7;
+    }
+
+    a {
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
+
 <body>
 <main>
-  <h1>HLS Player</h1>
-  <p>再生が許可されたHLS動画のURLを入力してください。</p>
+  <h1>万能動画プレイヤー</h1>
 
-  <label for="url">m3u8 URL</label>
-  <input id="url" type="url"
-    placeholder="https://example.com/playlist.m3u8">
+  <p>
+    動画ファイル、HLS、YouTubeなどのURLを入力してください。
+  </p>
 
-  <button id="play">動画を読み込む</button>
+  <label for="url">動画・ページURL</label>
+  <input
+    id="url"
+    type="url"
+    placeholder="https://example.com/video.mp4"
+    autocomplete="url"
+  >
 
-  <video id="video" controls playsinline></video>
+  <label for="mode">再生方法</label>
+  <select id="mode">
+    <option value="auto">自動判定</option>
+    <option value="video">動画ファイル / HLS</option>
+    <option value="embed">Webページ / 埋め込み</option>
+  </select>
 
-  <p id="status" role="status">待機中</p>
+  <button id="play" type="button">動画を読み込む</button>
 
-  <p class="note">
-    このページはHLSの再生用です。
-    MP4への変換・動画全体の保存を保証するものではありません。
-    配信元のアクセス許可と利用条件を守って使用してください。
+  <div class="player">
+    <video
+      id="video"
+      controls
+      playsinline
+      preload="metadata"
+      hidden
+    ></video>
+
+    <iframe
+      id="frame"
+      title="動画プレイヤー"
+      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+      allowfullscreen
+      referrerpolicy="strict-origin-when-cross-origin"
+      hidden
+    ></iframe>
+  </div>
+
+  <p id="status" role="status" aria-live="polite">
+    待機中
   </p>
 
   <p id="directLink"></p>
+
+  <p class="note">
+    このページは動画の再生用です。動画のダウンロードや保存を
+    保証するものではありません。配信元の利用条件とアクセス権限を
+    守って使用してください。
+  </p>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<!-- HLS.js -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+
 <script>
   const input = document.getElementById("url");
+  const mode = document.getElementById("mode");
   const video = document.getElementById("video");
+  const frame = document.getElementById("frame");
   const status = document.getElementById("status");
   const directLink = document.getElementById("directLink");
+  const playButton = document.getElementById("play");
 
   let hls = null;
+  let playbackId = 0;
 
-  document.getElementById("play").addEventListener("click", () => {
-    const value = input.value.trim();
-
-    let parsed;
-    try {
-      parsed = new URL(value);
-      if (!["http:", "https:"].includes(parsed.protocol)) {
-        throw new Error("HTTPSまたはHTTPのURLを入力してください。");
-      }
-    } catch (e) {
-      status.textContent = "URLが正しくありません。";
-      return;
-    }
+  function stopPlayback() {
+    playbackId++;
 
     if (hls) {
       hls.destroy();
       hls = null;
     }
 
+    video.onloadedmetadata = null;
+    video.oncanplay = null;
+    video.onerror = null;
+
     video.pause();
     video.removeAttribute("src");
     video.load();
-    directLink.replaceChildren();
-    status.textContent = "動画を読み込んでいます…";
 
-    // m3u8へのリンクを表示するだけで、動画保存とは別です。
+    frame.onload = null;
+    frame.removeAttribute("src");
+
+    video.hidden = true;
+    frame.hidden = true;
+
+    return playbackId;
+  }
+
+  function showLink(url) {
+    directLink.replaceChildren();
+
     const link = document.createElement("a");
-    link.href = parsed.href;
-    link.textContent = "元のm3u8プレイリストを開く";
+    link.href = url;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
+    link.textContent = "入力したURLを開く";
+
     directLink.appendChild(link);
+  }
 
-    if (window.Hls && Hls.isSupported()) {
-      hls = new Hls();
+  // YouTubeの各種URLを埋め込みURLへ変換
+  function getYouTubeEmbedUrl(url) {
+    const host = url.hostname.toLowerCase();
+    let id = "";
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        status.textContent = "読み込み完了。再生ボタンを押してください。";
-      });
-
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          status.textContent =
-            "読み込みに失敗しました。URL、配信元のCORS設定、" +
-            "ストリーム形式、アクセス権限を確認してください。";
-        }
-      });
-
-      hls.loadSource(parsed.href);
-      hls.attachMedia(video);
-
-    } else if (
-      video.canPlayType("application/vnd.apple.mpegurl")
+    if (
+      host === "youtu.be" ||
+      host === "www.youtu.be"
     ) {
-      video.src = parsed.href;
-      status.textContent =
-        "ブラウザ標準のHLS再生を試しています。";
-    } else {
-      status.textContent =
-        "このブラウザはHLS再生に対応していません。";
+      id = url.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (
+      host === "youtube.com" ||
+      host.endsWith(".youtube.com")
+    ) {
+      if (url.pathname === "/watch") {
+        id = url.searchParams.get("v") || "";
+      } else {
+        const match = url.pathname.match(
+          /^\/(?:embed|shorts|live)\/([^/?]+)/
+        );
+
+        if (match) id = match[1];
+      }
     }
+
+    if (!/^[\w-]{11}$/.test(id)) {
+      return null;
+    }
+
+    return "https://www.youtube.com/embed/" +
+      encodeURIComponent(id);
+  }
+
+  // Vimeoの一般的な動画URLを埋め込みURLへ変換
+  function getVimeoEmbedUrl(url) {
+    const host = url.hostname.toLowerCase();
+
+    if (
+      host !== "vimeo.com" &&
+      host !== "www.vimeo.com"
+    ) {
+      return null;
+    }
+
+    const match = url.pathname.match(
+      /^\/(\d+)\/?$/
+    );
+
+    if (!match) return null;
+
+    return "https://player.vimeo.com/video/" + match[1];
+  }
+
+  function showFrame(url, id, message) {
+    if (id !== playbackId) return;
+
+    video.hidden = true;
+    frame.hidden = false;
+    status.textContent = message;
+    frame.src = url;
+  }
+
+  function playVideo(url, isHls, id) {
+    video.hidden = false;
+    frame.hidden = true;
+
+    video.onloadedmetadata = () => {
+      if (id !== playbackId) return;
+
+      status.textContent =
+        "読み込み完了。再生ボタンを押してください。";
+    };
+
+    video.oncanplay = () => {
+      if (id !== playbackId) return;
+
+      status.textContent = "再生できます。";
+    };
+
+    video.onerror = () => {
+      if (id !== playbackId) return;
+
+      if (isHls) {
+        status.textContent =
+          "HLSを読み込めませんでした。URL、CORS設定、" +
+          "配信元のアクセス権限を確認してください。";
+      } else {
+        status.textContent =
+          "動画を再生できませんでした。動画URL、形式、" +
+          "CORS設定、アクセス権限を確認してください。" +
+          " Webページの場合は「Webページ / 埋め込み」を試してください。";
+      }
+    };
+
+    if (isHls) {
+      if (window.Hls && Hls.isSupported()) {
+        hls = new Hls();
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (id !== playbackId) return;
+
+          status.textContent =
+            "HLS読み込み完了。再生ボタンを押してください。";
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (id !== playbackId || !data.fatal) return;
+
+          status.textContent =
+            "HLSの再生に失敗しました。URL、CORS設定、" +
+            "ストリーム形式、アクセス権限を確認してください。";
+        });
+
+        hls.loadSource(url.href);
+        hls.attachMedia(video);
+
+      } else if (
+        video.canPlayType("application/vnd.apple.mpegurl")
+      ) {
+        video.src = url.href;
+        video.load();
+
+        status.textContent = "HLSを読み込んでいます…";
+      } else {
+        status.textContent =
+          "このブラウザはHLS再生に対応していません。";
+      }
+
+      return;
+    }
+
+    video.src = url.href;
+    video.load();
+
+    status.textContent = "動画を読み込んでいます…";
+  }
+
+  playButton.addEventListener("click", () => {
+    const value = input.value.trim();
+
+    let url;
+
+    try {
+      url = new URL(value);
+
+      if (!["http:", "https:"].includes(url.protocol)) {
+        throw new Error("Invalid protocol");
+      }
+    } catch {
+      stopPlayback();
+      status.textContent =
+        "正しいHTTPまたはHTTPSのURLを入力してください。";
+      return;
+    }
+
+    const id = stopPlayback();
+    showLink(url.href);
+
+    const selectedMode = mode.value;
+    const host = url.hostname.toLowerCase();
+
+    const youtubeUrl = getYouTubeEmbedUrl(url);
+    const vimeoUrl = getVimeoEmbedUrl(url);
+
+    const isKnownPage =
+      !!youtubeUrl ||
+      !!vimeoUrl ||
+      host === "youtube.com" ||
+      host.endsWith(".youtube.com") ||
+      host === "youtu.be" ||
+      host === "vimeo.com" ||
+      host.endsWith(".vimeo.com");
+
+    // 埋め込みモード、または自動判定されたYouTube / Vimeo
+    if (
+      selectedMode === "embed" ||
+      (selectedMode === "auto" && isKnownPage)
+    ) {
+      if (youtubeUrl) {
+        showFrame(
+          youtubeUrl,
+          id,
+          "YouTubeプレイヤーを読み込んでいます…"
+        );
+      } else if (vimeoUrl) {
+        showFrame(
+          vimeoUrl,
+          id,
+          "Vimeoプレイヤーを読み込んでいます…"
+        );
+      } else {
+        showFrame(
+          url.href,
+          id,
+          "ページを埋め込んでいます。配信元が埋め込みを許可している必要があります。"
+        );
+      }
+
+      return;
+    }
+
+    // URLのパスに基づきHLSか通常動画かを判定
+    const isHls = /\.m3u8$/i.test(url.pathname);
+
+    playVideo(url, isHls, id);
   });
 </script>
 </body>
